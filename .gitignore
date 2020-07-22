@@ -1,2 +1,5 @@
 .idea/workspace.xml
 *.pyc
+*.nrepl-port
+*.bundle
+clojure/target/
