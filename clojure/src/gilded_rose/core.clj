@@ -1,5 +1,33 @@
 (ns gilded-rose.core)
 
+(defn update-quality-original [items]
+  (map
+   (fn[item] (cond
+               (and (< (:sell-in item) 0) (= "Backstage passes to a TAFKAL80ETC concert" (:name item)))
+               (merge item {:quality 0})
+               (or (= (:name item) "Aged Brie") (= (:name item) "Backstage passes to a TAFKAL80ETC concert"))
+               (if (and (= (:name item) "Backstage passes to a TAFKAL80ETC concert") (>= (:sell-in item) 5) (< (:sell-in item) 10))
+                 (merge item {:quality (inc (inc (:quality item)))})
+                 (if (and (= (:name item) "Backstage passes to a TAFKAL80ETC concert") (>= (:sell-in item) 0) (< (:sell-in item) 5))
+                   (merge item {:quality (inc (inc (inc (:quality item))))})
+                   (if (< (:quality item) 50)
+                     (merge item {:quality (inc (:quality item))})
+                     item)))
+               (< (:sell-in item) 0)
+               (if (= "Backstage passes to a TAFKAL80ETC concert" (:name item))
+                 (merge item {:quality 0})
+                 (if (or (= "+5 Dexterity Vest" (:name item)) (= "Elixir of the Mongoose" (:name item)))
+                   (merge item {:quality (- (:quality item) 2)})
+                   item))
+               (or (= "+5 Dexterity Vest" (:name item)) (= "Elixir of the Mongoose" (:name item)))
+               (merge item {:quality (dec (:quality item))})
+               :else item))
+   (map (fn [item]
+          (if (not= "Sulfuras, Hand of Ragnaros" (:name item))
+            (merge item {:sell-in (dec (:sell-in item))})
+            item))
+        items)))
+
 (def legendary-item-names
   ["Sulfuras, Hand Of Ragnaros"])
 
@@ -113,7 +141,61 @@
   ([curr-inv]
    (update-quality curr-inv)))
 
+;; Test Code
+
+(def summarize-fix-item (juxt :name (comp :quality cap-depreciation)))
+
+(def summarize-item (juxt :name :quality))
+
+(defn qualities-equal?
+  "Returns true iff all of the qualities of the supplied inventory histories are
+  identical. Note that is applies the cap-depreciation function to all qualities
+  to remove negative values prior to the equality comparison. If unequal, returns
+  a sequence of 4-ary vectors containing false, the index of the inventory, and
+  the two summarized inventories that compare unequal"
+  [hist-orig hist-new]
+  (let [quals-orig (->> hist-orig (map (fn [inv] (map summarize-fix-item inv))))
+        quals-new (->> hist-new (map (fn [inv] (map summarize-item inv))))
+        are-equal (= quals-orig quals-new)]
+    (or are-equal
+        [are-equal
+         (->> quals-new
+              (interleave quals-orig)
+              (partition 2)
+              (map-indexed (fn [idx [orig-inv inv]]
+                             [(= orig-inv inv) idx orig-inv inv]))
+              (filter #(not (first %))))])))
+
+(defn- get-quality-history
+  "Given an initial inventory, an integer of days, and an update function, return
+  a vector of inventories documenting the history of how the inventory has
+  changed."
+  [init-inv days updater]
+  (->> days
+       range
+       (reduce
+        (fn [invs _] (conj invs (updater (last invs))))
+        [init-inv])))
+
+(defn regression-test
+  "Calling this function should return true if the new update quality function
+  ``new-fn`` (which defaults to ``update-quality``) behaves the same as the
+  untouched ``update-quality-original`` function."
+  ([] (regression-test 100 update-quality))
+  ([days] (regression-test days update-quality))
+  ([days new-fn]
+   (let [inventory initial-inventory
+         quality-history-original (get-quality-history
+                                   inventory days update-quality-original)
+         quality-history (get-quality-history inventory days new-fn)]
+     (qualities-equal? quality-history-original quality-history))))
+
 (comment
+
+  ;; Corrections made to the original code (aside from cosmetic refactorings)
+  ;; 1. Prevent quality values from decreasing to values less than 0. Implemented
+  ;;    via ``cap-depreciation`` function. This ensures that "the quality of an
+  ;;    item is never negative"
 
   (let [expected
         (list
@@ -167,5 +249,7 @@
               [items])
              (map (comp :quality first)))]
     (= exp quality-history))
+
+  (regression-test)
 
 )
