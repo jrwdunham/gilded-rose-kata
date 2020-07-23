@@ -28,46 +28,28 @@
             item))
         items)))
 
-(def legendary-item-names
-  ["Sulfuras, Hand Of Ragnaros"])
-
-(def backstage-pass-item-names
-  ["Backstage passes to a TAFKAL80ETC concert"])
-
-(def valueless-after-expiry-item-names backstage-pass-item-names)
-
-(def appreciates-item-names
-  (concat
-   ["Aged Brie"]
-   backstage-pass-item-names))
-
-(def conjured-item-names
-  ["Conjured jam"])
-
 (def max-appreciation 50)
 
 (def min-depreciation 0)
 
-(defn- legendary? [{item-name :name}]
-  (some #{item-name} legendary-item-names))
-
 (defn- expired? [{:keys [sell-in]}] (< sell-in 0))
 
-(defn- valueless-after-expiry? [{item-name :name}]
-  (some #{item-name} valueless-after-expiry-item-names))
+(defn- has-category? [category {:keys [categories]}]
+  (some #{category} categories))
 
-(defn- appreciates? [{item-name :name}]
-  (some #{item-name} appreciates-item-names))
+(def legendary? (partial has-category? :legendary))
+
+(def conjured? (partial has-category? :conjured))
+
+(def appreciates? (partial has-category? :appreciates))
+
+(def backstage-pass? (partial has-category? :backstage-pass))
+
+(def valueless-after-expiry? backstage-pass?)
 
 (defn- depreciates? [item]
   (not (or (legendary? item)
            (appreciates? item))))
-
-(defn- conjured? [{item-name :name}]
-  (some #{item-name} conjured-item-names))
-
-(defn- backstage-pass? [{item-name :name}]
-  (some #{item-name} backstage-pass-item-names))
 
 (defn- decrease-sell-in [item]
   (if (legendary? item)
@@ -118,6 +100,12 @@
 (defn item [item-name, sell-in, quality]
   {:name item-name, :sell-in sell-in, :quality quality})
 
+(defn extended-item
+  ([item-name sell-in quality]
+   (extended-item item-name sell-in quality []))
+  ([item-name sell-in quality categories]
+   (assoc (item item-name sell-in quality) :categories categories)))
+
 (def initial-inventory
   [(item "+5 Dexterity Vest" 10 20)
    (item "Aged Brie" 2 0)
@@ -125,9 +113,17 @@
    (item "Sulfuras, Hand Of Ragnaros" 0 80)
    (item "Backstage passes to a TAFKAL80ETC concert" 15 20)])
 
-(def conjured-jam (item "Conjured jam" 30 23))
+(def initial-extended-inventory
+  [(extended-item "+5 Dexterity Vest" 10 20)
+   (extended-item "Aged Brie" 2 0 [:appreciates])
+   (extended-item "Elixir of the Mongoose" 5 7)
+   (extended-item "Sulfuras, Hand Of Ragnaros" 0 80 [:legendary])
+   (extended-item "Backstage passes to a TAFKAL80ETC concert" 15 20
+                  [:appreciates :backstage-pass])])
 
-(def conjured-expired-jam (item "Conjured jam" 0 23))
+(def conjured-jam (extended-item "Conjured jam" 30 23 [:conjured]))
+
+(def conjured-expired-jam (extended-item "Conjured jam" 0 23 [:conjured]))
 
 (def updated-initial-inventory
   (conj initial-inventory
@@ -166,7 +162,7 @@
                              [(= orig-inv inv) idx orig-inv inv]))
               (filter #(not (first %))))])))
 
-(defn- get-quality-history
+(defn get-quality-history
   "Given an initial inventory, an integer of days, and an update function, return
   a vector of inventories documenting the history of how the inventory has
   changed."
@@ -184,7 +180,7 @@
   ([] (regression-test 100 update-quality))
   ([days] (regression-test days update-quality))
   ([days new-fn]
-   (let [inventory initial-inventory
+   (let [inventory initial-extended-inventory
          quality-history-original (get-quality-history
                                    inventory days update-quality-original)
          quality-history (get-quality-history inventory days new-fn)]
@@ -197,24 +193,11 @@
   ;;    via ``cap-depreciation`` function. This ensures that "the quality of an
   ;;    item is never negative"
 
-  (let [expected
-        (list
-         {:name "+5 Dexterity Vest" :sell-in 9 :quality 19}
-         {:name "Aged Brie" :sell-in 1 :quality 1}
-         {:name "Elixir of the Mongoose" :sell-in 4 :quality 6}
-         ;; {:name "Sulfuras, Hand Of Ragnaros" :sell-in -1 :quality 80}
-         {:name "Sulfuras, Hand Of Ragnaros" :sell-in 0 :quality 80}
-         {:name "Backstage passes to a TAFKAL80ETC concert" :sell-in 14
-          :quality 21})
-        output (update-current-inventory)]
-    (= expected output))
-
-  [updated-initial-inventory
-   (update-current-inventory updated-initial-inventory)]
-
   ;; Informal tests
 
-  (let [items [(item "Conjured jam" 3 3)]
+  ;; Show that a conjured item depreciates in quality twice as fast
+  ;; but never depreciates below 0.
+  (let [items [(extended-item "Conjured jam" 3 3 [:conjured])]
         exp [3 1 0 0 0 0 0]
         days 6
         quality-history
@@ -226,7 +209,8 @@
              (map (comp :quality first)))]
     (= exp quality-history))
 
-  (let [items [(item "Aged Brie" 3 48)]
+  ;; Show that an appreciating item appreciates over time but never above 50.
+  (let [items [(extended-item "Aged Brie" 3 48 [:appreciates])]
         exp [48 49 50 50 50 50 50]
         days 6
         quality-history
@@ -238,7 +222,10 @@
              (map (comp :quality first)))]
     (= exp quality-history))
 
-  (let [items [(item "Backstage passes to a TAFKAL80ETC concert" 11 30)]
+  ;; Show that a backstage pass item appreciates at different rates, depending on
+  ;; its closeness to expiry and then depreciates to zero upon expiry.
+  (let [items [(extended-item "Backstage passes to a TAFKAL80ETC concert" 11 30
+                              [:backstage-pass :appreciates])]
         exp [30 31 33 35 37 39 41 44 47 50 50 50 0]
         days 12
         quality-history
